@@ -1,0 +1,346 @@
+---
+title: "Untitled"
+author: "Haochen Pan"
+date: "2022-12-14"
+output: html_document
+runtime: shiny
+---
+
+## Abstract
+The Massachusetts Bay Transportation Authority is the public agency responsible for operating most public transportation services in Greater Boston, Massachusetts. The MBTA transit network includes the MBTA subway with three metro lines, two light rail lines, and a five-line bus rapid transit system. As of the second quarter of 2022, the MBTA will be the sixth busiest commuter rail system in the United States. When we travel, we usually use map app, such as google map or myMBTA to calculate the time and arrangement of take bus/railway. However, according to the feedback from the passengers, especially the students, the arrival time and situation of the train often cannot be analyzed through the map app. Thus, a question arose: Are software such as Google Maps really trustworthy? In this eda and report, I will use rshiny to make a website about MBTA to test whether Google map is completely credible.
+
+## Data select and clean
+
+In this part, I choose the heavy railway travel data and light railway travel data for quarter 3 in 2022 as an example in the eda part. Another 2 data are the operating data for bus and ferry from MBTA.
+```{r , echo=FALSE, message= FALSE, warning= FALSE}
+library(readr)
+stop <- read_csv("https://raw.githubusercontent.com/HaochenPan857/615-final/main/stops.txt")
+HR4 <- read_csv("C:/Users/panhaochen/Desktop/615 final/data/2022-Q3_HRTravelTimes.csv")
+LR4 <- read_csv("C:/Users/panhaochen/Desktop/615 final/data/2022-Q3_LRTravelTimes.csv")
+bus <- read_csv("https://raw.githubusercontent.com/HaochenPan857/615-final/main/commuter_bus_4m.csv")
+ferry <- read_csv("https://raw.githubusercontent.com/HaochenPan857/615-final/main/Ferry_stop_time.csv")
+```
+
+```{r , echo=FALSE, message= FALSE, warning= FALSE}
+library(readr)
+library(dplyr)
+library(ggplot2)
+library(sf)
+library(wesanderson)
+library("tools")
+library("maps")
+library("rnaturalearth")
+library("rnaturalearthdata")
+library(shiny)
+library(shinythemes)
+library(leaflet)
+library(grid)
+library(gridExtra)
+```
+
+```{r, echo=FALSE, message= FALSE, warning= FALSE}
+bus[bus==0] <- NA
+bus <- bus[complete.cases(bus),]
+ferry[ferry==0] <- NA
+ferry <- ferry[complete.cases(ferry),]
+ferry <- subset(ferry,travel_time < 100)
+```
+
+## EDA
+First, I combine the railway data set together in order to find the difference between different route lines. It will be helpful when I create the shiny website as the user can click sidebarPanel to change the line they want to choose. We find that the light railway should be considered more than heavy railway.
+
+```{r , echo=FALSE, message= FALSE, warning= FALSE}
+station <- rbind(select(HR4,c(3,4)),select(LR4,c(3,4))) %>% unique()
+n_station <- station %>% count(route_id)
+```
+
+```{r, echo=FALSE, message= FALSE, warning= FALSE}
+rail <- ggplot()+
+  geom_bar(data = station, aes(x= route_id,fill=route_id))+
+  ggtitle("Count for different lines in 2022 q3") + 
+  scale_fill_manual("route_id",values=c("#336CFF", "#BFFF33", "#6FFF33", "#33FF5E", "#33FFA6", "#E733FF", "#FFB033", "#FF5733"))
+rail
+```
+
+For the bus, its size is not as large as railway; while for the ferry, there are difference in time. Although there is not huge outliers in the dataset, but the traveling time show huge difference for different trips. 
+
+```{r, echo=FALSE, message= FALSE, warning= FALSE}
+Bus<- ggplot()+
+  geom_boxplot(data = bus, aes(x= time_point_id, y=headway ,fill=time_point_id))+
+  ggtitle("bus headway vs. time point")
+Bus
+```
+
+```{r, echo=FALSE, message= FALSE, warning= FALSE}
+Ferry<- ggplot()+
+  geom_boxplot(data = ferry, aes(x= sub_route, y=travel_time,fill=sub_route))+
+   scale_x_discrete(breaks = seq(0, 100, by = 5)) +
+  ggtitle("travel time for different route")
+Ferry
+```
+
+```{r, echo=FALSE, message= FALSE, warning= FALSE}
+density_1 <- plot(density(ferry$travel_time, main="Density"))
+density_2 <- plot(density(bus$scheduled_headway, main="Density"))
+density_3 <- plot(density(LR4$travel_time_sec, main="Density"))
+density_4 <- plot(density(HR4$travel_time_sec, main="Density"))
+```
+
+
+## Mapping
+
+To better help the shiny, i try to plot the MBTA lines/plots on the fixed map around Boston.
+
+```{r, echo=FALSE, message= FALSE, warning= FALSE}
+combine_data <- c("stop_id","stop_lat","stop_lon","platform_name")
+nstop <-select(stop,combine_data)
+b <- as.character(station$to_stop_id)
+ans = stop[which(nstop$stop_id ==b[1]),]
+for (i in 1:length(station$to_stop_id)){
+  df <- stop[which(nstop$stop_id ==b[i]),]
+  ans = rbind(df,ans)
+}
+df <- select(ans[1:length(station$to_stop_id),],combine_data)
+df$stop_id <- as.numeric(df$stop_id)
+df <- df[order(df$stop_id),]
+df$line <- as.factor(station$route_id)
+```
+
+The first map is for railway around Boston.
+
+```{r, echo=FALSE, message= FALSE, warning= FALSE}
+theme_set(theme_bw())
+world <- ne_countries(scale = "medium", returnclass = "sf")
+counties <- st_as_sf(map("county", plot = FALSE, fill = TRUE))
+counties <- subset(counties, grepl("massachusetts", counties$ID))
+counties$area <- as.numeric(st_area(counties))
+ggplot(data = world) +
+    geom_sf(fill = "cornsilk") +
+      geom_sf(data = counties, fill = NA, color = gray(.5)) +
+    geom_point(data = df, aes(x = stop_lon, y = stop_lat,color = line), size = 0.65) +
+       annotate(geom = "text", x = -71.1, y = 42.16, label = "Norfalk", 
+         color = "grey22", size = 5) +
+         annotate(geom = "text", x = -71.15, y = 42.45, label = "Middlesex", 
+         color = "grey22", size = 5) +
+           annotate(geom = "text", x = -70.98, y = 42.47, label = "Essex", 
+         color = "grey22", size = 5) +
+             annotate(geom = "text", x = -70.88, y = 42.14, label = "Plymouth", 
+         color = "grey22", size = 5) +
+    coord_sf(xlim = c(-71.3, -70.8), ylim = c(42.1, 42.5), expand = FALSE) +
+  scale_color_manual("route_id",values=c("#336CFF", "#BFFF33", "#6FFF33", "#33FF5E", "#33FFA6", "#E733FF", "#FFB033", "#FF5733"))
+```
+
+The second map is for bus station start position around Boston.
+
+```{r, echo=FALSE, message= FALSE, warning= FALSE}
+theme_set(theme_bw())
+world <- ne_countries(scale = "medium", returnclass = "sf")
+counties <- st_as_sf(map("county", plot = FALSE, fill = TRUE))
+counties <- subset(counties, grepl("massachusetts", counties$ID))
+counties$area <- as.numeric(st_area(counties))
+ggplot(data = world) +
+    geom_sf(fill = "cornsilk") +
+      geom_sf(data = counties, fill = NA, color = gray(.5)) +
+    geom_point(data = bus, aes(x = stop_lon, y = stop_lat,color = time_point_id), size = 1.5) +
+       annotate(geom = "text", x = -71.1, y = 42.16, label = "Norfalk", 
+         color = "grey22", size = 5) +
+         annotate(geom = "text", x = -71.15, y = 42.45, label = "Middlesex", 
+         color = "grey22", size = 5) +
+           annotate(geom = "text", x = -70.98, y = 42.47, label = "Essex", 
+         color = "grey22", size = 5) +
+             annotate(geom = "text", x = -70.88, y = 42.14, label = "Plymouth", 
+         color = "grey22", size = 5) +
+    coord_sf(xlim = c(-71.3, -70.8), ylim = c(42.1, 42.5), expand = FALSE)
+```
+
+The third map is for ferry trip depart location around Boston.
+
+```{r, echo=FALSE, message= FALSE, warning= FALSE}
+theme_set(theme_bw())
+world <- ne_countries(scale = "medium", returnclass = "sf")
+counties <- st_as_sf(map("county", plot = FALSE, fill = TRUE))
+counties <- subset(counties, grepl("massachusetts", counties$ID))
+counties$area <- as.numeric(st_area(counties))
+ggplot(data = world) +
+    geom_sf(fill = "cornsilk") +
+      geom_sf(data = counties, fill = NA, color = gray(.5)) +
+    geom_point(data = ferry, aes(x = stop_lon_depa, y = stop_lat_depa,color = departure_terminal), size = 1.5) +
+       annotate(geom = "text", x = -71.1, y = 42.16, label = "Norfalk", 
+         color = "grey22", size = 5) +
+         annotate(geom = "text", x = -71.15, y = 42.45, label = "Middlesex", 
+         color = "grey22", size = 5) +
+           annotate(geom = "text", x = -70.98, y = 42.47, label = "Essex", 
+         color = "grey22", size = 5) +
+             annotate(geom = "text", x = -70.88, y = 42.14, label = "Plymouth", 
+         color = "grey22", size = 5) +
+    coord_sf(xlim = c(-71.3, -70.8), ylim = c(42.1, 42.5), expand = FALSE) 
+```
+
+The last map is for railway line around Boston.
+
+```{r,eval=TRUE, echo=FALSE, message= FALSE, warning= FALSE}
+ggplot(data = world) +
+    geom_sf(fill = "cornsilk") +
+  
+      geom_sf(data = counties, fill = NA, color = gray(.5)) +
+  
+    geom_point(data = df[df$line == "Blue",], aes(x = stop_lon, y = stop_lat), size = 0.65, 
+         color = "blue") +
+    geom_line(data = df[df$line == "Blue",],aes(x = stop_lon,y = stop_lat),color = "blue",alpha = 0.6) +
+  
+    geom_point(data = df[df$line == "Orange",], aes(x = stop_lon, y = stop_lat), size = 0.65, 
+         color = "orange")+
+       geom_line(data = df[df$line == "Orange",],aes(x = stop_lon,y = stop_lat),color = "orange") +
+  
+      geom_point(data = df[df$line == "Red",], aes(x = stop_lon, y = stop_lat), size = 0.65, 
+         color = "red") +
+        geom_line(data = df[df$line == "Red",],aes(x = stop_lon,y = stop_lat),color = "red") +
+  
+       annotate(geom = "text", x = -71.1, y = 42.16, label = "Norfalk", 
+         color = "grey22", size = 4.5) +
+    
+         annotate(geom = "text", x = -71.15, y = 42.45, label = "Middlesex", 
+         color = "grey22", size = 4.5) +
+  
+           annotate(geom = "text", x = -70.98, y = 42.47, label = "Essex", 
+         color = "grey22", size = 4.5) +
+  
+             annotate(geom = "text", x = -70.88, y = 42.14, label = "Plymouth", 
+         color = "grey22", size = 4.5) +
+  
+    coord_sf(xlim = c(-71.3, -70.8), ylim = c(42.1, 42.5), expand = FALSE)
+```
+
+## Shiny
+
+Sorry the shiny failed. 
+
+```{r,eval=TRUE, echo=FALSE, message= FALSE, warning= FALSE}
+stations <- unique(ferry$arrival_terminal)
+c1 <- c("station","station","station","station","station")
+ui <- 
+  navbarPage("Mapping for MBTA", collapsible = TRUE, inverse = TRUE, theme = shinytheme("slate"),
+               tabPanel("railway",
+                      
+                      selectInput("whatline", "which subway line u are goingt o take", c("orange","blue","green","red","other")),
+
+                      textOutput("text4"),
+                      selectInput("d", "depart", c1),
+                      selectInput("d", "arrival", c1),
+                      
+                      textOutput("text3"),
+                      
+
+             leafletOutput("p2")),
+             tabPanel("Commuter BUS MAP",
+         sidebarLayout(
+           sidebarPanel(
+             selectInput("date", "Select Date:",  
+                         bus$service_date, selected = "2022-01-03"),
+             uiOutput("S3"),
+             uiOutput("S4"),
+             uiOutput("S5"),
+             uiOutput("S6"),
+             uiOutput("S7")
+             
+           ),
+           mainPanel(
+             leafletOutput("p2") 
+           )
+         )
+),
+
+                 tabPanel("Ferry Map",
+                          sidebarLayout(      
+                            sidebarPanel(
+                              selectInput("date1", "Select Date:", choices = unique(ferry$service_date)),
+                              uiOutput("S8"),
+                              uiOutput("S9")
+                              
+                            ),
+                            mainPanel(
+                              leafletOutput("p3")
+                              
+                            )
+                          )
+                 ) 
+                 
+)
+server <- function(input, output){
+
+  u1 <- reactive(ferry %>% filter(service_date==input$date1))
+  output$S8 <- renderUI(selectInput("departure","Select Departure: ", choices = u1()$departure_terminal))
+  u3 <- reactive(u1() %>% filter(departure_terminal==input$departure))
+  output$S9 <- renderUI(selectInput("arrival","Select Arrival: ", choices = u3()$arrival_terminal))
+  u2 <- reactive(u1() %>% filter(departure_terminal==input$departure & arrival_terminal==input$arrival))   
+  lon <- reactive(c(unique(u2()$stop_lon_depa), unique(u2()$stop_lon_arrival)))
+  lat <- reactive(c(unique(u2()$stop_lat_depa), unique(u2()$stop_lat_arrival)))
+  Ferry_time <- reactive(as.numeric(u2()$travel_time)) 
+  
+  output$p3 <- renderLeaflet(
+    leaflet() %>% 
+      setView(lng = -71.0589, lat = 42.3601, zoom = 10) %>% 
+      addProviderTiles("CartoDB.Positron")%>%
+      addCircleMarkers(lon(),lat(),radius=1,popup = c(unique(u2()$departure_terminal), unique(u2()$arrival_terminal))) %>%
+      addPolylines(lon(),lat(),color="orange", label = paste(round(mean(Ferry_time())),"min"), labelOptions = labelOptions(noHide = TRUE)
+      )
+    
+  )
+     
+  
+}
+
+shinyApp(ui, server)
+
+```
+
+The tabPanel with ferry is successful.
+
+```{r,eval=TRUE, echo=FALSE, message= FALSE, warning= FALSE}
+ui <- 
+  navbarPage("Mapping for MBTA", collapsible = TRUE, inverse = TRUE, theme = shinytheme("slate"),
+                 tabPanel("Ferry Map",
+                          sidebarLayout(      
+                            sidebarPanel(
+                              selectInput("date1", "Select Date:", choices = unique(ferry$service_date)),
+                              uiOutput("S8"),
+                              uiOutput("S9")
+                              
+                            ),
+                            mainPanel(
+                              leafletOutput("p3")
+                              
+                            )
+                          )
+                 ) 
+                 
+)
+server <- function(input, output){
+
+  u1 <- reactive(ferry %>% filter(service_date==input$date1))
+  output$S8 <- renderUI(selectInput("departure","Select Departure: ", choices = u1()$departure_terminal))
+  u3 <- reactive(u1() %>% filter(departure_terminal==input$departure))
+  output$S9 <- renderUI(selectInput("arrival","Select Arrival: ", choices = u3()$arrival_terminal))
+  u2 <- reactive(u1() %>% filter(departure_terminal==input$departure & arrival_terminal==input$arrival))   
+  lon <- reactive(c(unique(u2()$stop_lon_depa), unique(u2()$stop_lon_arrival)))
+  lat <- reactive(c(unique(u2()$stop_lat_depa), unique(u2()$stop_lat_arrival)))
+  Ferry_time <- reactive(as.numeric(u2()$travel_time)) 
+  
+  output$p3 <- renderLeaflet(
+    leaflet() %>% 
+      setView(lng = -71.0589, lat = 42.3601, zoom = 10) %>% 
+      addProviderTiles("CartoDB.Positron")%>%
+      addCircleMarkers(lon(),lat(),radius=1,popup = c(unique(u2()$departure_terminal), unique(u2()$arrival_terminal))) %>%
+      addPolylines(lon(),lat(),color="orange", label = paste(round(mean(Ferry_time())),"min"), labelOptions = labelOptions(noHide = TRUE)
+      )
+    
+  )
+     
+  
+}
+
+shinyApp(ui, server)
+
+```
+
+
